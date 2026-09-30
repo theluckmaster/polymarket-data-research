@@ -13,24 +13,56 @@ Tools for studying short-horizon crypto "UP/DOWN" prediction markets:
 
 This started as a question: can high-frequency market data reveal short-lived pricing or timing gaps in Polymarket's 5- and 15-minute "Will BTC be up or down?" markets? Those markets settle on a spot price, but their odds are set by traders. If spot moves first and the odds catch up a moment later, that delay is measurable.
 
-Over about two months I built a larger private system around that question. It streamed Polymarket order books alongside spot-exchange trades, logged them continuously on a VPS, and ran strategy ideas in backtests, in paper trading, and in a few small, tightly capped live tests.
+Over about two months (spring 2026) I built a larger private system around that question. It streamed Polymarket order books alongside spot-exchange trades for BTC, ETH, SOL, and XRP markets, and logged them continuously. It then ran strategy ideas through backtests, paper trading, "observe-only" shadow mode, and a few small, tightly capped live tests.
 
-**Approaches I tested**
-- **Latency and lead-lag:** does the market's price react to a spot move measurably late?
-- **Fair-value pricing:** estimate the probability of finishing above the window's starting price from spot and recent volatility, then compare it with the order book.
-- **Short-horizon momentum** from rolling returns, and a **mean-reversion** variant.
-- **Order-book strategies:** quoting inside the spread, and buying both outcomes when their combined ask dipped below the $1 payout.
-- **Regime filters:** skip low-volatility, near-the-strike conditions; pause after a run of losses.
-- **Sizing and risk:** fractional Kelly with a hard cap, a daily loss limit, and cooldowns.
-- **Calibration:** a study of whether resolved market prices matched actual outcome frequencies.
+### Approaches I tested
+
+**Signal strategies.** There were about a dozen, each a pluggable module behind one shared signal interface. Several never left paper or observe-only mode.
+
+| Family | Strategies |
+|---|---|
+| Arbitrage-style | Buying both outcomes when their combined ask dipped below the $1 payout (net of fees) |
+| Lead-lag | Cross-coin lead-lag; 5-minute vs. 15-minute regime divergence |
+| Order book | Depth imbalance; order-flow imbalance; spread-compression momentum; contrarian low-probability "stink bids" |
+| Trend | Raw momentum; EMA crossover; opening-range breakout; cross-sectional momentum |
+| Mean reversion | Window mean reversion; TWAP/VWAP deviation |
+| Other | Funding-rate mean reversion; time-of-day bias |
+
+**Latency arbitrage engine.** An event-driven engine priced each market with a fair-value model: the probability of finishing above the window's starting price, given live spot and realised volatility. It fired when the order book disagreed by more than a set edge. Around it I built:
+- asymmetric edge thresholds per side and market
+- de-duplication, after an early paper run turned out to be re-firing on the same market every few seconds
+- adverse-selection filters
+- a pause after a run of losses (a volatility/distance-to-strike regime filter was also tested)
+- a switch from fill-or-kill to fill-and-kill orders
+
+**Market making.** A quoting engine that posted inside the spread, first with resting orders, then with sequential fills and a forced exit.
+
+**Sizing and risk.** Fractional Kelly with a hard cap, a daily loss limit, cooldowns after consecutive losses, position caps, and dollar halts. For the final forward test, the rules and a statistical kill switch were locked in advance, not tuned afterwards. The code also went through independent AI-assisted audits at several points.
+
+**Measurement studies.** These tested the market, not a strategy:
+- **Calibration:** a study across tens of thousands of resolved markets. Did prices match outcome frequencies?
+- **Outcome labels:** I checked labels derived from exchange prices against the official settlement oracle. They disagreed often enough to corrupt earlier backtests, so the data pipeline was rebuilt to verify against the oracle.
+- **Microstructure:** sub-second order-book analysis and full order-book replays to measure adverse selection.
+- **Spreads:** a spread-capture logger that tracked how bid/ask spreads evolve over a market's lifetime.
+- **Settlement:** research into how fast the settlement price oracle updates and who competes on it.
+- **Tooling:** I also tried an off-the-shelf event-driven backtesting framework and compared it with my own replay.
+
+**Infrastructure.** Latency was the premise, so I measured it from several VPS regions:
+- **Toronto:** data collection, the monitoring dashboard, and early bot runs.
+- **Stockholm:** the market-making engine, for lower API round-trips than North America.
+- **Amsterdam:** the lowest-latency setup I had, close to European exchange feeds. It hosted the latency engine and the live canary tests.
+- **Tokyo and New Jersey:** latency comparison points. A Tokyo relay for exchange data turned out to add nothing and was dropped.
+
+The recorded data went to a large attached volume, with daily off-site sync.
 
 **What happened**
 
-Some early versions looked promising in backtests, paper trading, and small live tests. Most of that did not survive contact with scale:
-- Forward tests trailed the backtests. One paper run was stopped by its own kill switch within a day.
-- Part of the gap was my own tooling. An early backtester derived trade direction and outcome from the same price move, so every simulated trade won. Later retrospective tests had subtler timestamp-alignment leaks.
-- The rest was the market. Prices were well calibrated overall. The latency gaps that did exist lasted fractions of a second and were contested by many faster bots. Competing for them would have needed co-located, sub-100 ms infrastructure and far more capital than a research budget.
-- In short, the opportunities that were real were saturated, and the ones that looked open mostly came from how the data was measured.
+Some early versions looked promising in backtests and paper trading. That did not survive contact with real execution or scale:
+- **Small live runs** did not reproduce the paper results. One-sided fills, adverse selection, and thin capital showed up immediately.
+- **Forward tests trailed the backtests.** One pre-registered paper run was stopped by its own kill switch within about a day.
+- **Part of the gap was my own tooling.** An early backtester derived trade direction and outcome from the same price move, so every simulated trade won. Later, outcome labels built from exchange prices disagreed with the official oracle, and retrospective tests had subtler timestamp-alignment leaks.
+- **The rest was the market.** Prices were well calibrated overall. At sub-second resolution, the lag I had built the latency engine around was not there. The only real race, on oracle updates, lasted fractions of a second, was contested by many faster bots, and would have needed co-located infrastructure and far more capital than a research budget.
+- **In short:** the opportunities that were real were saturated, and the ones that looked open mostly came from how the data was measured. I stopped the project and kept the parts that were worth keeping.
 
 **What this repo keeps**
 
