@@ -9,11 +9,39 @@ Tools for studying short-horizon crypto "UP/DOWN" prediction markets:
 
 **This is a research codebase, not a trading bot.** It contains no order placement, no wallet or signing code, and no API keys. It makes no claim that any signal here is profitable. The included demo shows the opposite: on random data, the harness correctly reports no edge.
 
-## Background
+## Research motivation and approaches tested
 
-I built a larger private system that recorded Polymarket order books and spot-exchange trades for 5-minute BTC markets and tested strategy ideas against them. This repo is the part worth showing: the data plumbing and the evaluation harness, rewritten as a small, tested package. Live-execution code, account data, and recorded datasets are deliberately excluded (see [SECURITY_AND_DATA_NOTES.md](SECURITY_AND_DATA_NOTES.md)).
+This started as a question: can high-frequency market data reveal short-lived pricing or timing gaps in Polymarket's 5- and 15-minute "Will BTC be up or down?" markets? Those markets settle on a spot price, but their odds are set by traders. If spot moves first and the odds catch up a moment later, that delay is measurable.
 
-The main lesson from that work shaped the design. An early backtester of mine derived the trade direction and the win/loss outcome from the same price move, so every simulated trade won. This version separates the data used to decide from the data used to settle, and tests that separation.
+Over about two months I built a larger private system around that question. It streamed Polymarket order books alongside spot-exchange trades, logged them continuously on a VPS, and ran strategy ideas in backtests, in paper trading, and in a few small, tightly capped live tests.
+
+**Approaches I tested**
+- **Latency and lead-lag:** does the market's price react to a spot move measurably late?
+- **Fair-value pricing:** estimate the probability of finishing above the window's starting price from spot and recent volatility, then compare it with the order book.
+- **Short-horizon momentum** from rolling returns, and a **mean-reversion** variant.
+- **Order-book strategies:** quoting inside the spread, and buying both outcomes when their combined ask dipped below the $1 payout.
+- **Regime filters:** skip low-volatility, near-the-strike conditions; pause after a run of losses.
+- **Sizing and risk:** fractional Kelly with a hard cap, a daily loss limit, and cooldowns.
+- **Calibration:** a study of whether resolved market prices matched actual outcome frequencies.
+
+**What happened**
+
+Some early versions looked promising in backtests, paper trading, and small live tests. Most of that did not survive contact with scale:
+- Forward tests trailed the backtests. One paper run was stopped by its own kill switch within a day.
+- Part of the gap was my own tooling. An early backtester derived trade direction and outcome from the same price move, so every simulated trade won. Later retrospective tests had subtler timestamp-alignment leaks.
+- The rest was the market. Prices were well calibrated overall. The latency gaps that did exist lasted fractions of a second and were contested by many faster bots. Competing for them would have needed co-located, sub-100 ms infrastructure and far more capital than a research budget.
+- In short, the opportunities that were real were saturated, and the ones that looked open mostly came from how the data was measured.
+
+**What this repo keeps**
+
+This repo is the part worth showing: the data plumbing and the evaluation harness, rewritten as a small, tested package.
+- **Ingestion:** streaming WebSocket ingestion with reconnect and stale-feed handling.
+- **Features:** rolling tick buffers, momentum scoring, and regime labels.
+- **Risk:** risk-limit and sizing primitives.
+- **Backtester:** it makes look-ahead impossible by construction.
+- **Two safeguard tests:** a random-walk null test that must find *no* edge, and a planted-trend test that must find one. Together they guard against the false conclusions that cost me the most time.
+
+Live-execution code, wallet and API details, account data, and recorded datasets are deliberately excluded (see [SECURITY_AND_DATA_NOTES.md](SECURITY_AND_DATA_NOTES.md)). Nothing here is a profitable strategy or trading advice.
 
 ## Quick start (Python 3.11+)
 
